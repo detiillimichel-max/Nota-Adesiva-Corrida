@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<!-- Playables SDK -->
+<script>// Playables SDK v1.0.0
+// Game lifecycle bridge: rAF-based game-ready detection + event communication
+(function() {
+  'use strict';
+
+  // Idempotency: skip if already initialized (e.g., server-side injection
+  // followed by client-side inject-javascript via the Bloks webview component).
+  if (window.playablesSDK) return;
+
+  var HANDLER_NAME = 'playablesGameEventHandler';
+  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
+  var RAF_FRAME_THRESHOLD = 3;
+
+  var gameReadySent = false;
+  var firstInteractionSent = false;
+  var errorSent = false;
+  var frameCount = 0;
+  var originalRAF = window.requestAnimationFrame;
+
+  // --- Transport Layer ---
+
+  function hasIOSBridge() {
+    return !!(window.webkit &&
+              window.webkit.messageHandlers &&
+              window.webkit.messageHandlers[HANDLER_NAME]);
+  }
+
+  function hasAndroidBridge() {
+    return !!(window[ANDROID_BRIDGE_NAME] &&
+              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
+  }
+
+  function isInIframe() {
+    return !!(window.parent && window.parent !== window);
+  }
+
+  function sendEvent(eventName, payload) {
+    var message = {
+      type: eventName,
+      payload: payload || {},
+      timestamp: Date.now()
+    };
+
+    if (hasIOSBridge()) {
+      try {
+        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    if (hasAndroidBridge()) {
+    try {
+      var p = payload || {};
+      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
+      p.timestamp = message.timestamp;
+      window[ANDROID_BRIDGE_NAME].postEvent(
+        eventName,
+        JSON.stringify(p)
+      );
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+    if (isInIframe()) {
+      try {
+        window.parent.postMessage(message, '*');
+      } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+
+  // --- rAF Game-Ready Detection ---
+
+  function onFrame() {
+    if (gameReadySent) return;
+
+    frameCount++;
+    if (frameCount >= RAF_FRAME_THRESHOLD) {
+      gameReadySent = true;
+      sendEvent('game_ready', {
+        frame_count: frameCount,
+        detected_at: Date.now()
+      });
+      return;
+    }
+
+    originalRAF.call(window, onFrame);
+  }
+
+  if (originalRAF) {
+    window.requestAnimationFrame = function(callback) {
+      if (!gameReadySent) {
+        return originalRAF.call(window, function(timestamp) {
+          frameCount++;
+          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
+            gameReadySent = true;
+            sendEvent('game_ready', {
+              frame_count: frameCount,
+              detected_at: Date.now()
+            });
+          }
+          callback(timestamp);
+        });
+      }
+      return originalRAF.call(window, callback);
+    };
+  }
+
+  // --- First User Interaction Detection ---
+
+  function setupFirstInteractionDetection() {
+    var events = ['touchstart', 'mousedown', 'keydown'];
+
+    function onFirstInteraction() {
+      if (firstInteractionSent) return;
+      firstInteractionSent = true;
+      sendEvent('user_interaction_start', null);
+
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], onFirstInteraction, true);
+      }
+    }
+
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], onFirstInteraction, true);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
+  } else {
+    setupFirstInteractionDetection();
+  }
+
+  // --- Auto Error Capture ---
+
+  window.addEventListener('error', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    sendEvent('error', {
+      message: event.message || 'Unknown error',
+      source: event.filename || '',
+      lineno: event.lineno || 0,
+      colno: event.colno || 0,
+      auto_captured: true
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    var reason = event.reason;
+    sendEvent('error', {
+      message: (reason instanceof Error) ? reason.message : String(reason),
+      type: 'unhandled_promise_rejection',
+      auto_captured: true
+    });
+  });
+
+  // --- Public API ---
+
+  window.playablesSDK = {
+    complete: function(score) {
+      sendEvent('game_ended', {
+        score: score,
+        completed: true
+      });
+    },
+
+    error: function(message) {
+      if (errorSent) return;
+      errorSent = true;
+      sendEvent('error', {
+        message: message || 'Unknown error',
+        auto_captured: false
+      });
+    },
+
+    sendEvent: function(eventName, payload) {
+      if (!eventName || typeof eventName !== 'string') return;
+      sendEvent(eventName, payload);
+    }
+  };
+
+  // Kick off rAF detection in case no game code calls rAF immediately
+  if (originalRAF) {
+    originalRAF.call(window, onFrame);
+  }
+})();</script>
+<!-- PLAYABLE_TOUCH_PATCH_V1 --><script>
+(function() {
+  if (window.__playableTouchPatchInstalled) return;
+  window.__playableTouchPatchInstalled = true;
+  var origAdd = EventTarget.prototype.addEventListener;
+  var blockedTypes = { touchstart: 1, touchmove: 1, wheel: 1 };
+  EventTarget.prototype.addEventListener = function(type, listener, options) {
+    if (blockedTypes[type]) {
+      if (options === undefined || options === null) {
+        options = { passive: true };
+      } else if (typeof options === 'boolean') {
+        options = { capture: options, passive: true };
+      } else {
+        options = Object.assign({}, options, { passive: true });
+      }
+    }
+    return origAdd.call(this, type, listener, options);
+  };
+})();
+</script><script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Nota Adesiva Corrida Fases</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    background:#0f172a;
+    color:#0f172a;
+    display:flex;
+    flex-direction:column;
+    overscroll-behavior:none;
+    user-select:none;
+    -webkit-user-select:none;
+    touch-action:none;
+  }
+  #hud{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:.75rem;
+    padding:.75rem 1rem;
+    background:#020617;
+    color:#f1f5f9;
+    box-shadow:0 2px 10px rgba(0,0,0,.4);
+    z-index:10;
+  }
+  .hud-item{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    min-width:90px;
+  }
+  .hud-label{
+    font-size:.7rem;
+    text-transform:uppercase;
+    letter-spacing:.08em;
+    opacity:.7;
+  }
+  .hud-value{
+    font-size:1.4rem;
+    font-weight:800;
+    line-height:1.1;
+    font-variant-numeric:tabular-nums;
+  }
+  #time.low{color:#f87171;animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+  #game{
+    flex:1;
+    display:grid;
+    grid-template-columns:220px 1fr;
+    grid-template-rows:1fr auto;
+    gap:1rem;
+    padding:1rem;
+    max-width:1400px;
+    width:100%;
+    margin:0 auto;
+  }
+  #targets{
+    grid-row:1/3;
+    background:#fff;
+    border-radius:16px;
+    padding:1rem;
+    box-shadow:0 10px 30px rgba(0,0,0,.25);
+    display:flex;
+    flex-direction:column;
+    gap:.75rem;
+    overflow:auto;
+  }
+  #targets h2{
+    font-size:1.1rem;
+    text-transform:uppercase;
+    letter-spacing:.05em;
+  }
+  .target-list{display:flex;flex-direction:column;gap:.6rem}
+  .target{
+    display:flex;
+    align-items:center;
+    gap:.6rem;
+    padding:.6rem;
+    border-radius:12px;
+    background:#f8fafc;
+    border:2px solid #e2e8f0;
+    transition:.2s;
+  }
+  .target.done{
+    border-color:#22c55e;
+    background:#f0fdf4;
+  }
+  .target-dot{
+    width:28px;height:28px;border-radius:8px;
+    box-shadow:inset 0 -3px 0 rgba(0,0,0,.15),0 2px 4px rgba(0,0,0,.15);
+    flex-shrink:0;
+  }
+  .target-info{flex:1}
+  .target-name{font-weight:700;text-transform:capitalize;font-size:.9rem}
+  .target-count{font-variant-numeric:tabular-nums;font-size:.85rem;opacity:.8}
+  .target-check{font-size:1.2rem;opacity:0;transition:.2s}
+  .target.done .target-check{opacity:1}
+  #board-wrapper{
+    background:#fff;
+    border-radius:16px;
+    padding:1rem;
+    box-shadow:0 10px 30px rgba(0,0,0,.25);
+    display:flex;
+    flex-direction:column;
+    min-height:0;
+  }
+  #board{
+    flex:1;
+    position:relative;
+    background:#e6d3b3;
+    background-image:
+      radial-gradient(#d4b996 1px,transparent 0),
+      radial-gradient(#d4b996 1px,transparent 0);
+    background-size:20px 20px;
+    background-position:0 0,10px 10px;
+    border:10px solid #8b5e3c;
+    border-radius:8px;
+    overflow:hidden;
+    box-shadow:inset 0 0 40px rgba(0,0,0,.15);
+    touch-action:none;
+  }
+  #palette{
+    margin-top:1rem;
+    display:flex;
+    gap:1rem;
+    justify-content:center;
+    flex-wrap:wrap;
+    padding:.75rem;
+    background:#f1f5f9;
+    border-radius:12px;
+    border:2px dashed #cbd5e1;
+  }
+  .palette-note{
+    width:72px;height:72px;
+    border-radius:4px 14px 4px 14px;
+    box-shadow:0 6px 14px rgba(0,0,0,.25),inset 0 -4px 0 rgba(0,0,0,.12);
+    cursor:grab;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-weight:800;
+    font-size:.75rem;
+    text-transform:uppercase;
+    letter-spacing:.03em;
+    position:relative;
+    transform:rotate(-2deg);
+    transition:transform .15s;
+    touch-action:none;
+  }
+  .palette-note:active{cursor:grabbing}
+  .palette-note:nth-child(2){transform:rotate(3deg)}
+  .palette-note:nth-child(3){transform:rotate(-4deg)}
+  .palette-note:nth-child(4){transform:rotate(2deg)}
+  .palette-note::before{
+    content:"";
+    position:absolute;
+    top:-8px;left:50%;transform:translateX(-50%) rotate(-3deg);
+    width:40px;height:14px;
+    background:rgba(255,255,255,.6);
+    box-shadow:0 1px 3px rgba(0,0,0,.15);
+    border-radius:2px;
+  }
+  .note{
+    position:absolute;
+    width:72px;height:72px;
+    border-radius:4px 14px 4px 14px;
+    box-shadow:0 6px 14px rgba(0,0,0,.28),inset 0 -4px 0 rgba(0,0,0,.12);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-weight:800;
+    font-size:.7rem;
+    text-transform:uppercase;
+    pointer-events:none;
+    animation:pop .18s ease-out;
+  }
+  .note::before{
+    content:"";
+    position:absolute;
+    top:-7px;left:50%;transform:translateX(-50%) rotate(-3deg);
+    width:36px;height:12px;
+    background:rgba(255,255,255,.55);
+    box-shadow:0 1px 2px rgba(0,0,0,.12);
+    border-radius:2px;
+  }
+  @keyframes pop{0%{transform:scale(.6) rotate(var(--rot))}100%{transform:scale(1) rotate(var(--rot))}}
+  .drag-ghost{
+    position:fixed;
+    z-index:9999;
+    pointer-events:none;
+    opacity:.9;
+    transform:scale(1.05) rotate(5deg);
+  }
+  #score{color:#fde047}
+  .color-yellow{background:#ffeb3b;color:#713f12}
+  .color-pink{background:#f472b6;color:#831843}
+  .color-blue{background:#60a5fa;color:#1e3a8a}
+  .color-green{background:#4ade80;color:#14532d}
+  #overlay{
+    position:fixed;inset:0;
+    background:rgba(2,6,23,.85);
+    backdrop-filter:blur(6px);
+    display:none;
+    align-items:center;
+    justify-content:center;
+    z-index:10000;
+    padding:1rem;
+  }
+  #overlay.show{display:flex}
+  .overlay-card{
+    background:#fff;
+    border-radius:20px;
+    padding:2rem;
+    max-width:420px;
+    width:100%;
+    text-align:center;
+    box-shadow:0 20px 60px rgba(0,0,0,.5);
+    animation:slideUp .3s ease-out;
+  }
+  @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .overlay-card h2{font-size:2rem;margin-bottom:.5rem}
+  .overlay-card p{color:#475569;margin-bottom:1.2rem;line-height:1.5}
+  .btn{
+    background:#0ea5e9;color:#fff;border:none;
+    padding:.9rem 1.4rem;
+    border-radius:12px;
+    font-weight:800;
+    font-size:1rem;
+    cursor:pointer;
+    box-shadow:0 6px 16px rgba(14,165,233,.4);
+    transition:.15s;
+  }
+  .btn:active{transform:translateY(1px)}
+  .stats{
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    gap:.75rem;
+    margin:1rem 0 1.5rem;
+  }
+  .stat{
+    background:#f1f5f9;
+    border-radius:12px;
+    padding:.75rem;
+  }
+  .stat-label{font-size:.75rem;text-transform:uppercase;opacity:.7}
+  .stat-value{font-size:1.4rem;font-weight:800}
+  @media (max-width:900px){
+    #game{
+      grid-template-columns:1fr;
+      grid-template-rows:auto 1fr auto;
+    }
+    #targets{
+      grid-row:auto;
+      order:-1;
+      flex-direction:row;
+      align-items:center;
+      overflow:auto;
+    }
+    #targets h2{display:none}
+    .target-list{flex-direction:row}
+    .target{min-width:150px}
+    #board-wrapper{padding:.75rem}
+    .palette-note,.note{width:64px;height:64px}
+  }
+  @media (max-width:560px){
+    #hud{padding:.5rem .75rem}
+    .hud-item{min-width:70px}
+    .hud-value{font-size:1.2rem}
+    #game{padding:.75rem;gap:.75rem}
+    .palette-note,.note{width:58px;height:58px;font-size:.65rem}
+  }
+</style>
+</head>
+<body>
+  <header id="hud">
+    <div class="hud-item">
+      <div class="hud-label">Pontuação</div>
+      <div class="hud-value" id="score">0</div>
+    </div>
+    <div class="hud-item">
+      <div class="hud-label">Fase</div>
+      <div class="hud-value" id="phase">1</div>
+    </div>
+    <div class="hud-item">
+      <div class="hud-label">Tempo</div>
+      <div class="hud-value" id="time">45</div>
+    </div>
+  </header>
+
+  <main id="game">
+    <aside id="targets">
+      <h2>Metas</h2>
+      <div class="target-list" id="targetList"></div>
+    </aside>
+
+    <section id="board-wrapper">
+      <div id="board"></div>
+      <div id="palette" aria-label="Paleta de post-its">
+        <div class="palette-note color-yellow" data-color="yellow">10 pts</div>
+        <div class="palette-note color-pink" data-color="pink">20 pts</div>
+        <div class="palette-note color-blue" data-color="blue">30 pts</div>
+        <div class="palette-note color-green" data-color="green">50 pts</div>
+      </div>
+    </section>
+  </main>
+
+  <div id="overlay">
+    <div class="overlay-card" id="overlayCard"></div>
+  </div>
+
+<script>
+(function(){
+  'use strict';
+  const POINTS = { yellow:10, pink:20, blue:30, green:50 };
+  const COLORS = ['yellow','pink','blue','green'];
+  const BASE_PHASES = [
+    { pink:3, blue:3 },
+    { pink:5, blue:5, yellow:5 },
+    { pink:8, blue:8, yellow:5, green:3 }
+  ];
+  const PHASE_TIME = 45;
+  const NOTE_SIZE = 72;
+
+  const scoreEl = document.getElementById('score');
+  const phaseEl = document.getElementById('phase');
+  const timeEl = document.getElementById('time');
+  const board = document.getElementById('board');
+  const palette = document.getElementById('palette');
+  const targetList = document.getElementById('targetList');
+  const overlay = document.getElementById('overlay');
+  const overlayCard = document.getElementById('overlayCard');
+
+  let phaseIndex = 0;
+  let score = 0;
+  let timeLeft = PHASE_TIME;
+  let timerId = null;
+  let counts = {};
+  let dragging = null;
+  let phaseTargets = {};
+  let gameActive = false;
+
+  function getPhaseTargets(idx){
+    if(idx < BASE_PHASES.length) return {...BASE_PHASES[idx]};
+    // Increase progressively
+    const last = getPhaseTargets(idx-1);
+    const inc = { pink:2, blue:2, yellow:2, green:1 };
+    const next = {};
+    COLORS.forEach(c=>{
+      const base = last[c] || 0;
+      next[c] = base + (inc[c]||2);
+    });
+    return next;
+  }
+
+  function startGame(){
+    phaseIndex = 0;
+    score = 0;
+    startPhase();
+  }
+
+  function startPhase(){
+    gameActive = true;
+    board.innerHTML = '';
+    counts = { yellow:0, pink:0, blue:0, green:0 };
+    phaseTargets = getPhaseTargets(phaseIndex);
+    timeLeft = PHASE_TIME;
+    updateHUD();
+    renderTargets();
+    hideOverlay();
+    if(timerId) clearInterval(timerId);
+    timerId = setInterval(tick, 1000);
+  }
+
+  function tick(){
+    if(!gameActive) return;
+    timeLeft--;
+    timeEl.textContent = timeLeft;
+    timeEl.classList.toggle('low', timeLeft <= 10 && timeLeft > 0);
+    if(timeLeft <= 0){
+      gameOver();
+    }
+  }
+
+  function updateHUD(){
+    scoreEl.textContent = score;
+    phaseEl.textContent = phaseIndex + 1;
+    timeEl.textContent = timeLeft;
+  }
+
+  function renderTargets(){
+    targetList.innerHTML = '';
+    Object.entries(phaseTargets).forEach(([color, req])=>{
+      const cur = counts[color] || 0;
+      const done = cur >= req;
+      const div = document.createElement('div');
+      div.className = 'target' + (done ? ' done' : '');
+      div.innerHTML = `
+        <div class="target-dot color-${color}"></div>
+        <div class="target-info">
+          <div class="target-name">${color}</div>
+          <div class="target-count">${Math.min(cur,req)} / ${req}</div>
+        </div>
+        <div class="target-check">✓</div>
+      `;
+      targetList.appendChild(div);
+    });
+  }
+
+  function checkTargets(){
+    renderTargets();
+    const ok = Object.entries(phaseTargets).every(([c,req])=> (counts[c]||0) >= req);
+    if(ok){
+      phaseComplete();
+    }
+  }
+
+  function placeNote(color, x, y){
+    if(!gameActive) return;
+    const note = document.createElement('div');
+    note.className = `note color-${color}`;
+    note.textContent = `${POINTS[color]} pts`;
+    const rot = (Math.random()*10 -5).toFixed(2);
+    note.style.setProperty('--rot', rot+'deg');
+    note.style.transform = `rotate(${rot}deg)`;
+    // clamp
+    const bw = board.clientWidth;
+    const bh = board.clientHeight;
+    const nx = Math.max(0, Math.min(bw - NOTE_SIZE, x - NOTE_SIZE/2));
+    const ny = Math.max(0, Math.min(bh - NOTE_SIZE, y - NOTE_SIZE/2));
+    note.style.left = nx + 'px';
+    note.style.top = ny + 'px';
+    board.appendChild(note);
+    counts[color] = (counts[color]||0) + 1;
+    score += POINTS[color];
+    scoreEl.textContent = score;
+    // pulse score
+    scoreEl.animate([{transform:'scale(1)'},{transform:'scale(1.2)'},{transform:'scale(1)'}],{duration:200});
+    checkTargets();
+  }
+
+  function phaseComplete(){
+    gameActive = false;
+    clearInterval(timerId);
+    showOverlay(`
+      <h2>Fase ${phaseIndex+1} Concluída!</h2>
+      <p>Você atingiu todas as metas com ${timeLeft}s restantes.</p>
+      <div class="stats">
+        <div class="stat"><div class="stat-label">Pontuação</div><div class="stat-value">${score}</div></div>
+        <div class="stat"><div class="stat-label">Próxima</div><div class="stat-value">${phaseIndex+2}</div></div>
+      </div>
+      <button class="btn" id="nextBtn">Próxima Fase</button>
+    `);
+    document.getElementById('nextBtn').onclick = ()=>{
+      phaseIndex++;
+      startPhase();
+    };
+  }
+
+  function gameOver(){
+    gameActive = false;
+    clearInterval(timerId);
+    timeEl.classList.remove('low');
+    showOverlay(`
+      <h2>Fim de Jogo</h2>
+      <p>O tempo acabou! Você chegou até a fase ${phaseIndex+1}.</p>
+      <div class="stats">
+        <div class="stat"><div class="stat-label">Pontuação Final</div><div class="stat-value">${score}</div></div>
+        <div class="stat"><div class="stat-label">Fase</div><div class="stat-value">${phaseIndex+1}</div></div>
+      </div>
+      <button class="btn" id="restartBtn">Jogar Novamente</button>
+    `);
+    document.getElementById('restartBtn').onclick = startGame;
+  }
+
+  function showOverlay(html){
+    overlayCard.innerHTML = html;
+    overlay.classList.add('show');
+  }
+  function hideOverlay(){
+    overlay.classList.remove('show');
+  }
+
+  // Drag handling
+function startDrag(e){
+  if(!gameActive) return;
+  const noteEl = e.currentTarget;
+  const color = noteEl.dataset.color;
+  e.preventDefault();
+  const ghost = noteEl.cloneNode(true);
+  ghost.classList.add('drag-ghost');
+  ghost.style.width = noteEl.offsetWidth + 'px';
+  ghost.style.height = noteEl.offsetHeight + 'px';
+  document.body.appendChild(ghost);
+  const rect = noteEl.getBoundingClientRect();
+  const offsetX = e.clientX - rect.left;
+  const offsetY = e.clientY - rect.top;
+  moveGhost(e.clientX, e.clientY, ghost, offsetX, offsetY);
+  dragging = {color, ghost, offsetX, offsetY};
+  window.addEventListener('pointermove', onMove, {passive:false});
+  window.addEventListener('pointerup', onUp, {passive:false});
+  window.addEventListener('pointercancel', onUp, {passive:false});
+}
+
+function moveGhost(cx, cy, ghost, ox, oy){
+  ghost.style.left = (cx - ox) + 'px';
+  ghost.style.top = (cy - oy) + 'px';
+}
+
+function onMove(e){
+  if(!dragging) return;
+  e.preventDefault();
+  moveGhost(e.clientX, e.clientY, dragging.ghost, dragging.offsetX, dragging.offsetY);
+}
+
+function onUp(e){
+  if(!dragging) return;
+  const {color, ghost} = dragging;
+  const boardRect = board.getBoundingClientRect();
+  const cx = e.clientX, cy = e.clientY;
+  if(cx >= boardRect.left && cx <= boardRect.right && cy >= boardRect.top && cy <= boardRect.bottom){
+    const x = cx - boardRect.left;
+    const y = cy - boardRect.top;
+    placeNote(color, x, y);
+  }
+  ghost.remove();
+  dragging = null;
+  window.removeEventListener('pointermove', onMove);
+  window.removeEventListener('pointerup', onUp);
+  window.removeEventListener('pointercancel', onUp);
+}
+
+// Init palette listeners
+document.querySelectorAll('.palette-note').forEach(el=>{
+  el.addEventListener('pointerdown', startDrag);
+});
+
+// Prevent context menu on long press
+document.addEventListener('contextmenu', e=>e.preventDefault());
+
+// Start
+startGame();
+
+})();
+</script>
+</body>
+</html>
+  
